@@ -1,171 +1,130 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
+import logging
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+import stripe
+import asyncio
 
-# C extensions
-*.so
+# تنظیمات اولیه
+API_TOKEN = '7656948861:AAGQoIcAeEMar0LC2XGPLRvwUBjsu1P8ewc'  # جایگزین با توکن واقعی
+STRIPE_SECRET_KEY = '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'
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# تنظیم کلید Stripe
+stripe.api_key = STRIPE_SECRET_KEY
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# تنظیم لاگ‌ها
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+# دستور /start
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text(
+        'سلام! من ربات بررسی کارت هستم.\nبرای بررسی کارت، دستور /chk را به همراه اطلاعات کارت ارسال کنید.\n\nفرمت دستور:\n/chk <شماره کارت>,<ماه انقضا>,<سال انقضا>,<CVC>'
+    )
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
+# دستور /help
+def help_command(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text(
+        'برای استفاده از من، دستور زیر را به همراه اطلاعات کارت خود ارسال کنید:\n\n'
+        '/chk <شماره کارت>,<ماه انقضا>,<سال انقضا>,<CVC>\n\n'
+        'مثال:\n/chk 4242424242424242,12,2025,123'
+    )
 
-# Translations
-*.mo
-*.pot
+# تابع بررسی کارت
+async def check_card(card):
+    card_number, exp_month, exp_year, cvc = card
+    try:
+        # ایجاد PaymentMethod
+        payment_method = stripe.PaymentMethod.create(
+            type="card",
+            card={
+                "number": card_number,
+                "exp_month": exp_month,
+                "exp_year": exp_year,
+                "cvc": cvc,
+            },
+        )
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
+        # ایجاد PaymentIntent
+        payment_intent = stripe.PaymentIntent.create(
+            amount=100,  # 1.00 دلار
+            currency='usd',
+            payment_method=payment_method.id,
+            confirmation_method='manual',
+            confirm=True,
+        )
 
-# Flask stuff:
-instance/
-.webassets-cache
+        if payment_intent.status in ['requires_action', 'requires_confirmation']:
+            result = "کارت نیاز به اقدامات اضافی دارد. ممکن است نیاز به احراز هویت داشته باشد."
+        elif payment_intent.status == 'succeeded':
+            result = "کارت معتبر و تایید شده است."
+        else:
+            result = f"وضعیت PaymentIntent: {payment_intent.status}"
 
-# Scrapy stuff:
-.scrapy
+    except stripe.error.CardError as e:
+        # کارت نامعتبر
+        result = f"کارت نامعتبر است: {e.user_message}"
+    except Exception as e:
+        # سایر خطاها
+        result = f"خطایی رخ داده است: {str(e)}"
 
-# Sphinx documentation
-docs/_build/
+    return f"کارت {card_number}: {result}"
 
-# PyBuilder
-.pybuilder/
-target/
+# مدیریت دستور /chk
+def chk_command(update: Update, context: CallbackContext) -> None:
+    user_input = ' '.join(context.args)
+    if not user_input:
+        update.message.reply_text("لطفاً اطلاعات کارت را پس از دستور /chk وارد کنید.\nمثال:\n/chk 4242424242424242,12,2025,123")
+        return
 
-# Jupyter Notebook
-.ipynb_checkpoints
+    parts = user_input.split(',')
+    if len(parts) != 4:
+        update.message.reply_text("فرمت نامعتبر. لطفاً اطلاعات کارت را به صورت زیر وارد کنید:\n/chk <شماره کارت>,<ماه انقضا>,<سال انقضا>,<CVC>")
+        return
 
-# IPython
-profile_default/
-ipython_config.py
+    card_number, exp_month, exp_year, cvc = [part.strip() for part in parts]
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
+    # اعتبارسنجی اولیه ورودی‌ها
+    if not (card_number.isdigit() and exp_month.isdigit() and exp_year.isdigit() and cvc.isdigit()):
+        update.message.reply_text("لطفاً از وارد کردن اعداد صحیح برای شماره کارت، ماه، سال و CVC اطمینان حاصل کنید.")
+        return
 
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
+    card = (card_number, int(exp_month), int(exp_year), cvc)
 
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#uv.lock
+    # اجرای بررسی کارت‌ها به صورت ناهمزمان
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(check_card(card))
+    loop.close()
 
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
+    # ارسال نتیجه به کاربر
+    update.message.reply_text(result)
 
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#pdm.lock
-#   pdm stores project-wide configurations in .pdm.toml, but it is recommended to not include it
-#   in version control.
-#   https://pdm.fming.dev/latest/usage/project/#working-with-version-control
-.pdm.toml
-.pdm-python
-.pdm-build/
+# مدیریت پیام‌های غیر از دستورات
+def handle_message(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text(
+        'دستور ناشناخته است. برای راهنمایی از دستور /help استفاده کنید.'
+    )
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
+def main():
+    # ایجاد Updater و Dispatcher
+    updater = Updater(API_TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
+    # افزودن هندلرها
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("help", help_command))
+    dispatcher.add_handler(CommandHandler("chk", chk_command))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
-# SageMath parsed files
-*.sage.py
+    # شروع ربات
+    updater.start_polling()
+    updater.idle()
 
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# PyCharm
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
+if __name__ == '__main__':
+    main()
 
 # PyPI configuration file
 .pypirc
